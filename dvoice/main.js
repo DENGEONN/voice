@@ -1,0 +1,260 @@
+const { app, BrowserWindow, ipcMain, session, shell, screen } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const { checkAndStage, cmpVer } = require('./updater');
+
+const VERSION = global.__dvVersion || '0.0.0';
+const BUNDLED_DIR = global.__dvBundledDir || __dirname;
+
+// Откуда качаем обновления (папка dvoice в репозитории DENGEONN/voice, GitHub Pages и запасной raw)
+const UPDATE_BASES = [
+  'https://dengeonn.github.io/voice/dvoice',
+  'https://raw.githubusercontent.com/DENGEONN/voice/main/dvoice'
+];
+
+app.setAppUserModelId('local.dvoice.chat');
+
+function assetPath(name) {
+  const p = path.join(__dirname, name);
+  return fs.existsSync(p) ? p : path.join(BUNDLED_DIR, name);
+}
+
+// ---------- глобальный перехват клавиш/мыши ----------
+let uio = null, Key = {};
+for (const tryLoad of [
+  () => require('uiohook-napi'),
+  () => require(path.join(BUNDLED_DIR, 'node_modules', 'uiohook-napi'))
+]) {
+  try { ({ uIOhook: uio, UiohookKey: Key } = tryLoad()); break; } catch (e) { /* пробуем дальше */ }
+}
+if (!uio) console.error('uiohook-napi не загрузился, глобальные клавиши недоступны');
+
+const keyNames = {};
+for (const [name, code] of Object.entries(Key)) if (!(code in keyNames)) keyNames[code] = name;
+
+// ---------- настройки ----------
+const cfgPath = () => path.join(app.getPath('userData'), 'config.json');
+function loadCfg() { try { return JSON.parse(fs.readFileSync(cfgPath(), 'utf8')); } catch (e) { return {}; } }
+function saveCfg(patch) {
+  try { fs.writeFileSync(cfgPath(), JSON.stringify({ ...loadCfg(), ...patch })); } catch (e) {}
+}
+
+const cfg0 = loadCfg();
+const binds = { ptt: cfg0.ptt || { type: 'key', code: Key.F9 }, mute: cfg0.mute || null };
+const down = { ptt: false, mute: false };
+let capturing = null;   // { target, resolve }
+let win = null, overlay = null;
+let overlayCfg = { enabled: false, corner: 'tr', ...(cfg0.overlay || {}) };
+let lastOverlayList = [];
+
+function labelOf(b) {
+  if (!b) return 'не назначена';
+  if (b.type === 'mouse') return 'Кнопка мыши ' + b.button;
+  return keyNames[b.code] || ('код ' + b.code);
+}
+function matches(b, type, v) {
+  return !!b && b.type === type && (type === 'key' ? b.code === v : b.button === v);
+}
+function send(ch, ...a) {
+  if (win && !win.isDestroyed()) win.webContents.send(ch, ...a);
+}
+
+function finishCapture(b) {
+  const c = capturing;
+  capturing = null;
+  if (!c) return;
+  if (b) {
+    const other = c.target === 'ptt' ? 'mute' : 'ptt';
+    if (binds[other] && b.type === binds[other].type && (b.code === binds[other].code && b.button === binds[other].button)) {
+      if (other === 'ptt') { c.resolve(null); return; }   // PTT нельзя отобрать
+      binds[other] = null;
+    }
+    binds[c.target] = b;
+    down.ptt = false; down.mute = false;
+    saveCfg({ ptt: binds.ptt, mute: binds.mute });
+  }
+  c.resolve(b ? labelOf(b) : null);
+}
+
+function handleDown(type, v, isEsc) {
+  if (capturing) {
+    if (isEsc) return finishCapture(null);
+    if (type === 'mouse' && v < 3) return;     // левую/правую кнопку не берём
+    return finishCapture(type === 'key' ? { type, code: v } : { type, button: v });
+  }
+  if (matches(binds.ptt, type, v) && !down.ptt) { down.ptt = true; send('ptt:state', true); }
+  if (matches(binds.mute, type, v) && !down.mute) { down.mute = true; send('mute:toggle'); }
+}
+function handleUp(type, v) {
+  if (matches(binds.ptt, type, v) && down.ptt) { down.ptt = false; send('ptt:state', false); }
+  if (matches(binds.mute, type, v) && down.mute) { down.mute = false; }
+}
+
+if (uio) {
+  uio.on('keydown', e => handleDown('key', e.keycode, e.keycode === Key.Escape));
+  uio.on('keyup', e => handleUp('key', e.keycode));
+  uio.on('mousedown', e => handleDown('mouse', e.button, false));
+  uio.on('mouseup', e => handleUp('mouse', e.button));
+}
+
+ipcMain.handle('bind:get', () => ({ ptt: labelOf(binds.ptt), mute: labelOf(binds.mute), hook: !!uio }));
+ipcMain.handle('bind:capture', (_e, target) => new Promise(resolve => {
+  if (!uio || (target !== 'ptt' && target !== 'mute')) return resolve(null);
+  if (capturing) capturing.resolve(null);
+  capturing = { target, resolve };
+}));
+ipcMain.handle('bind:clear', (_e, target) => {
+  if (target === 'mute') { binds.mute = null; saveCfg({ mute: null }); }
+  return labelOf(binds.mute);
+});
+
+// Свои ICE-серверы (TURN): файл ice.json рядом с DVoice.exe
+ipcMain.handle('ice:get', () => {
+  for (const d of [path.dirname(process.execPath), app.getPath('userData')]) {
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(d, 'ice.json'), 'utf8'));
+      if (Array.isArray(j) && j.length) return j;
+    } catch (e) {}
+  }
+  return null;
+});
+
+ipcMain.handle('app:info', () => ({ version: VERSION, name: 'DVoice' }));
+
+// ---------- оверлей ----------
+const OV_W = 300, OV_H = 320, OV_MARGIN = 14;
+
+function overlayBounds() {
+  const wa = screen.getPrimaryDisplay().workArea;
+  const right = overlayCfg.corner === 'tr' || overlayCfg.corner === 'br';
+  const bottom = overlayCfg.corner === 'bl' || overlayCfg.corner === 'br';
+  return {
+    width: OV_W, height: OV_H,
+    x: right ? wa.x + wa.width - OV_W - OV_MARGIN : wa.x + OV_MARGIN,
+    y: bottom ? wa.y + wa.height - OV_H - OV_MARGIN : wa.y + OV_MARGIN
+  };
+}
+function pushOverlay() {
+  if (overlay && !overlay.isDestroyed()) overlay.webContents.send('overlay:data', { list: lastOverlayList, corner: overlayCfg.corner });
+}
+function createOverlay() {
+  if (overlay && !overlay.isDestroyed()) return;
+  overlay = new BrowserWindow({
+    ...overlayBounds(),
+    transparent: true, frame: false, resizable: false, movable: false, focusable: false,
+    skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false, fullscreenable: false,
+    webPreferences: { preload: assetPath('overlay-preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
+  });
+  overlay.setAlwaysOnTop(true, 'screen-saver');
+  overlay.setIgnoreMouseEvents(true);
+  overlay.loadFile(assetPath('overlay.html'));
+  overlay.webContents.on('did-finish-load', pushOverlay);
+  overlay.once('ready-to-show', () => { if (overlay && !overlay.isDestroyed()) overlay.showInactive(); });
+  overlay.on('closed', () => { overlay = null; });
+}
+function destroyOverlay() {
+  if (overlay && !overlay.isDestroyed()) overlay.destroy();
+  overlay = null;
+}
+function applyOverlay() {
+  if (overlayCfg.enabled) {
+    createOverlay();
+    if (overlay && !overlay.isDestroyed()) { overlay.setBounds(overlayBounds()); pushOverlay(); }
+  } else destroyOverlay();
+}
+
+ipcMain.handle('overlay:get', () => overlayCfg);
+ipcMain.handle('overlay:set', (_e, v) => {
+  if (v && typeof v === 'object') {
+    if (typeof v.enabled === 'boolean') overlayCfg.enabled = v.enabled;
+    if (['tl', 'tr', 'bl', 'br'].includes(v.corner)) overlayCfg.corner = v.corner;
+    saveCfg({ overlay: overlayCfg });
+    applyOverlay();
+  }
+  return overlayCfg;
+});
+ipcMain.on('overlay:update', (_e, list) => {
+  if (!Array.isArray(list)) return;
+  lastOverlayList = list.slice(0, 8).map(x => ({
+    name: String((x && x.name) || '').slice(0, 40),
+    speaking: !!(x && x.speaking),
+    me: !!(x && x.me),
+    muted: !!(x && x.muted)
+  }));
+  pushOverlay();
+});
+
+// ---------- автообновление ----------
+let stagedVersion = null;
+let checking = false;
+
+async function runCheck() {
+  if (checking) return { status: 'busy' };
+  checking = true;
+  try {
+    const base = stagedVersion && cmpVer(stagedVersion, VERSION) > 0 ? stagedVersion : VERSION;
+    const r = await checkAndStage({
+      baseUrls: UPDATE_BASES,
+      currentVersion: base,
+      updatesDir: (() => { const d = path.join(app.getPath('userData'), 'updates'); fs.mkdirSync(d, { recursive: true }); return d; })()
+    });
+    if (r.status === 'staged') stagedVersion = r.version;
+    send('update:status', r);
+    return r;
+  } catch (e) {
+    const r = { status: 'error', message: String(e && e.message || e) };
+    send('update:status', r);
+    return r;
+  } finally { checking = false; }
+}
+ipcMain.handle('update:check', () => runCheck());
+ipcMain.handle('update:apply', () => { app.relaunch(); app.exit(0); });
+
+// ---------- окно ----------
+function createWindow() {
+  win = new BrowserWindow({
+    width: 480,
+    height: 820,
+    minWidth: 400,
+    minHeight: 560,
+    backgroundColor: '#11151c',
+    autoHideMenuBar: true,
+    title: 'DVoice',
+    icon: assetPath('icon.png'),
+    webPreferences: {
+      preload: assetPath('preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  });
+  win.removeMenu();
+  win.loadFile(assetPath('index.html'));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', e => e.preventDefault());
+  win.webContents.on('did-finish-load', () => {
+    setTimeout(() => { try { global.__dvConfirm && global.__dvConfirm(); } catch (e) {} }, 8000);
+  });
+  win.on('closed', () => { win = null; destroyOverlay(); });
+}
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  app.whenReady().then(() => {
+    session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => cb(permission === 'media'));
+    session.defaultSession.setPermissionCheckHandler((wc, permission) => permission === 'media');
+    createWindow();
+    if (uio) { try { uio.start(); } catch (e) { console.error(e); } }
+    if (overlayCfg.enabled) applyOverlay();
+    setTimeout(runCheck, 4000);
+    setInterval(runCheck, 20 * 60 * 1000);
+  });
+  app.on('window-all-closed', () => app.quit());
+  app.on('will-quit', () => { if (uio) { try { uio.stop(); } catch (e) {} } });
+}

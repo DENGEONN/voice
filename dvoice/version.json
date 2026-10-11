@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "notes": "первая версия DVoice",
+  "minShell": 1,
+  "files": {
+    "main.js": "45de5454b258ed7e5d504ccb33198cd89b73b2f3e304e495753eceacde1ffc14",
+    "preload.js": "02134a569aab608f63160a05188cfd63020adb73076eebf308b5b3993a8b7b7b",
+    "index.html": "4f35979931282bb51cbdbf4742c2d6c5e79dc8f89069dba3f5b04108c71face4",
+    "overlay.html": "1274d73ab71764059a4836deff9d017fc04efde152206e84292079960d02d906",
+    "overlay-preload.js": "1a6b213bfa2af26b807eba0797c8a42f60478eb250711bf81313ecfe5b1cc72f",
+    "updater.js": "9da3f8600d47553e145603ef6c3096795bd22eaf24921b1cdd2bc7e7b04551c8",
+    "peerjs.min.js": "ad5d8870d1e389914f9cba8d35be313c4327c69ee0a221e482e9bf7621136fe5",
+    "icon.png": "910967bf3a453eea092b2c0f0d39f0a1849b70695bdfe810372b7a07309bc5ef"
+  }
+}
