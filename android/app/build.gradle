@@ -1,0 +1,48 @@
+plugins {
+    id "com.android.application"
+}
+
+def vc = (project.findProperty("vCode") ?: "1").toString().toInteger()
+
+android {
+    namespace "local.dvoice.chat"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "local.dvoice.chat"
+        minSdk 26
+        targetSdk 34
+        versionCode vc
+        versionName "1.0.2"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("dvoice.jks")
+            storePassword "dvoice-friends"
+            keyAlias "dvoice"
+            keyPassword "dvoice-friends"
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation "androidx.webkit:webkit:1.11.0"
+}
