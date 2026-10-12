@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src https: wss:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src https: wss:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>DVoice</title>
 <style>
   :root {
@@ -95,6 +95,26 @@
   .chatRow { display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--line); }
   .chatRow input { margin: 0; flex: 1; }
 
+  #screens { display: grid; gap: 12px; margin-bottom: 18px; }
+  #screens:empty { display: none; }
+  .invite {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    background: var(--panel); border: 1px solid var(--speak); border-radius: 10px; padding: 8px 12px; font-size: 14px;
+  }
+  .invite.mine { border-color: var(--ok); }
+  .screenBox { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #000; }
+  .screenBox .bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--panel); font-size: 13px; }
+  .screenBox .bar .who { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .screenBox .bar .state { color: var(--muted); }
+  .screenBox video { display: block; width: 100%; max-height: 46vh; background: #000; object-fit: contain; }
+  #picker { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: grid; place-items: center; z-index: 10; }
+  #pickerBox { background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 16px; width: min(94vw, 480px); max-height: 86vh; overflow: auto; }
+  #pickerBox h2 { font-size: 18px; margin: 0 0 12px; }
+  .pitem { display: grid; grid-template-columns: 128px 1fr; gap: 10px; align-items: center; width: 100%; text-align: left; margin-bottom: 8px; padding: 6px; }
+  .pitem img { width: 128px; height: 72px; object-fit: cover; border-radius: 6px; background: #000; }
+  .pitem span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  #pttHold { width: 100%; margin-bottom: 14px; padding: 22px 16px; font-size: 18px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  #pttHold.down { background: var(--speak); color: #1b1405; border-color: var(--speak); }
   #status { color: var(--muted); font-size: 14px; min-height: 1.4em; }
   @media (prefers-reduced-motion: reduce) { .ava { transition: none; } }
 </style>
@@ -128,13 +148,17 @@
       <button id="copy">Скопировать ссылку</button>
     </div>
 
+    <div id="screens"></div>
     <ul id="people"></ul>
 
     <div class="controls">
       <button id="muteBtn">Выключить микрофон</button>
+      <button id="shareBtn" class="no-android">Показать экран</button>
       <button id="chatBtn">Чат<span id="unread" hidden>0</span></button>
       <button id="leave" class="danger">Выйти</button>
     </div>
+
+    <button id="pttHold" hidden>Удерживай, чтобы говорить</button>
 
     <div id="chat" hidden>
       <div id="chatLog" aria-live="polite"></div>
@@ -148,10 +172,10 @@
       <summary>Настройки</summary>
 
       <label class="opt"><input type="checkbox" id="ptt"> <span id="pttText">Push-to-talk: говорить, пока зажат Пробел</span></label>
-      <div class="opt native-only" id="pttBind" hidden>
+      <div class="opt native-only no-android" id="pttBind" hidden>
         <button class="small" id="pttBtn">Клавиша PTT</button><span class="val" id="pttKey"></span>
       </div>
-      <div class="opt native-only" id="muteBind" hidden>
+      <div class="opt native-only no-android" id="muteBind" hidden>
         <button class="small" id="muteKeyBtn">Клавиша мута</button><span class="val" id="muteKey"></span>
         <button class="small" id="muteKeyClear">Сбросить</button>
       </div>
@@ -169,9 +193,27 @@
       </div>
       <p class="hint native-only" id="ovHint" hidden>Оверлей виден в играх в режиме «окно без рамки» (не в эксклюзивном полноэкранном).</p>
 
+      <div id="shareSettings" class="no-android">
+      <div class="opt">
+        <span>Показ экрана:</span>
+        <select id="shareQ" aria-label="Качество показа экрана">
+          <option value="low">экономно: 720p, 15 к/с (~1 Мбит/с)</option>
+          <option value="mid" selected>обычно: 720p, 30 к/с (~2,5 Мбит/с)</option>
+          <option value="high">высоко: 1080p, 30 к/с (~5 Мбит/с)</option>
+        </select>
+      </div>
+      <label class="opt"><input type="checkbox" id="shareAudio"> Передавать звук системы (друзья услышат и свой голос с задержкой)</label>
+      <label class="opt"><input type="checkbox" id="autoWatch" checked> Сразу смотреть, когда кто-то показывает экран</label>
+      <p class="hint">Трафик на экран идёт, только пока показ включён, и только тем, кто смотрит. Скорость указана на каждого зрителя.</p>
+      </div>
+
       <label class="field" style="margin-top:8px">Микрофон
         <select id="mic"></select>
       </label>
+
+      <div class="opt android-only" id="battRow" hidden>
+        <button class="small" id="battBtn">Не усыплять приложение</button><span id="battState"></span>
+      </div>
 
       <div class="opt native-only" id="updRow" hidden>
         <button class="small" id="updBtn">Проверить обновления</button><span id="updStatus"></span>
@@ -183,7 +225,15 @@
 
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<div id="picker" hidden>
+  <div id="pickerBox" role="dialog" aria-label="Выбор экрана или окна">
+    <h2>Что показать?</h2>
+    <div id="pickerList"></div>
+    <button id="pickerCancel" style="width:100%;margin-top:6px">Отмена</button>
+  </div>
+</div>
+
+<script src="./peerjs.min.js"></script>
 <script>
 // ===================== НАСТРОЙКИ =====================
 const PREFIX = 'dgn-voice-v2-';   // протокол: у всех должен совпадать (обновления приложения его не меняют)
@@ -214,6 +264,7 @@ const store = {
 };
 
 const NATIVE = window.vcNative;
+const ANDROID = window.DVAndroid;
 let ICE_SERVERS = ICE_DEFAULT;
 let customIce = false;
 let pttLabel = 'Пробел';
@@ -256,13 +307,19 @@ $('muteBtn').onclick = toggleMute;
 $('ptt').onchange = () => { store.set('vc_ptt', $('ptt').checked ? '1' : '0'); applyMute(); };
 $('sounds').onchange = () => store.set('vc_sounds', $('sounds').checked ? '1' : '0');
 $('copy').onclick = async () => {
-  const url = NATIVE ? room : location.origin + location.pathname + '#room=' + encodeURIComponent(room);
-  try { await navigator.clipboard.writeText(url); setStatus(NATIVE ? 'Код комнаты скопирован' : 'Ссылка скопирована'); }
+  const url = (NATIVE || ANDROID) ? room : location.origin + location.pathname + '#room=' + encodeURIComponent(room);
+  try { await navigator.clipboard.writeText(url); setStatus((NATIVE || ANDROID) ? 'Код комнаты скопирован' : 'Ссылка скопирована'); }
   catch (e) { setStatus(url); }
 };
 $('mic').onchange = changeMic;
-window.addEventListener('beforeunload', () => { sayBye(); if (peer && !peer.destroyed) peer.destroy(); });
+window.addEventListener('beforeunload', () => { sayBye(); if (ANDROID) ANDROID.stopCall(); if (peer && !peer.destroyed) peer.destroy(); });
 
+function ovSend(list) {
+  try {
+    if (NATIVE) NATIVE.overlayUpdate(list);
+    else if (ANDROID) ANDROID.overlayUpdate(JSON.stringify(list));
+  } catch (e) {}
+}
 function setErr(t) { $('err').textContent = t || ''; }
 function setStatus(t) { $('status').textContent = t || ''; }
 
@@ -363,6 +420,7 @@ async function join() {
   store.set('vc_name', myName);
   store.set('vc_room', room);
   track = stream.getAudioTracks()[0];
+  if (ANDROID) ANDROID.startCall(room);
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   audioCtx.resume();
@@ -393,7 +451,7 @@ function connectSlot(n) {
     setErr('Не нашёл свободное место в комнате. Подожди минуту (старые сессии ещё висят на сервере) и зайди снова.');
     return;
   }
-  const p = new Peer(peerId(n), { debug: 0, config: { iceServers: ICE_SERVERS } });
+  const p = new Peer(peerId(n), Object.assign({ debug: 0, config: { iceServers: ICE_SERVERS } }, window.DV_PEER_OPTS || {}));
 
   p.on('open', () => {
     peer = p; slot = n;
@@ -402,6 +460,7 @@ function connectSlot(n) {
   });
 
   p.on('call', call => {
+    if (call.metadata && call.metadata.type === 'screen') { acceptScreen(call); return; }
     call.answer(stream);
     setupCall(call, 'in', 0);
   });
@@ -441,7 +500,7 @@ function announceJoin(rid) {
 function setupData(conn) {
   const rid = conn.peer;
   dataConns[rid] = conn;
-  conn.on('open', () => { try { conn.send({ name: myName }); } catch (e) {} });
+  conn.on('open', () => { try { conn.send({ name: myName }); if (shareStream) conn.send({ screen: 'start' }); } catch (e) {} });
   conn.on('data', d => {
     if (!d) return;
     const pr = peers[rid];
@@ -451,6 +510,7 @@ function setupData(conn) {
       if (pr) { pr.li.querySelector('.nm').textContent = names[rid]; pr.li.querySelector('.ava').textContent = (names[rid].trim().charAt(0) || '?').toUpperCase(); announceJoin(rid); }
     }
     if (typeof d.chat === 'string') addChat(displayName(rid), d.chat.slice(0, 500), 'them');
+    if (d.screen) handleScreenMsg(rid, d.screen);
     if (d.bye) removePeer(rid);
   });
   conn.on('close', () => { if (dataConns[rid] === conn) delete dataConns[rid]; });
@@ -544,6 +604,7 @@ function removePeer(rid, silent) {
   if (!pr) return;
   delete peers[rid];
   const name = displayName(rid);
+  closeWatch(rid, true); closeScreenOut(rid); delete invites[rid]; renderInvites();
   try { pr.call.close(); } catch (e) {}
   pr.audio.pause();
   pr.audio.srcObject = null;
@@ -644,9 +705,9 @@ function startMeter() {
       pr.li.classList.toggle('speaking', sp);
       list.push({ name: displayName(rid), speaking: sp, me: false });
     }
-    if (NATIVE && overlayOn) {
+    if ((NATIVE || ANDROID) && overlayOn) {
       const sig = JSON.stringify(list);
-      if (sig !== lastOv) { lastOv = sig; NATIVE.overlayUpdate(list); }
+      if (sig !== lastOv) { lastOv = sig; ovSend(list); }
     }
   }, 100);
 }
@@ -658,6 +719,7 @@ function applyMute() {
   if (track) track.enabled = open;
   $('muteBtn').textContent = muted ? 'Включить микрофон' : 'Выключить микрофон';
   $('muteBtn').classList.toggle('off', muted);
+  $('pttHold').hidden = !(ANDROID && ptt);
   if (me) {
     me.li.classList.toggle('muted', !open);
     me.li.querySelector('.sub').textContent = muted ? 'микрофон выключен' : (ptt ? (pttHeld ? 'говоришь' : 'держи ' + pttLabel + ', чтобы говорить') : '');
@@ -752,6 +814,75 @@ if (NATIVE) {
   };
 }
 
+// ---------- Android ----------
+if (ANDROID) {
+  document.querySelectorAll('.native-only, .android-only').forEach(el => { el.hidden = false; });
+  document.querySelectorAll('.no-android').forEach(el => { el.hidden = true; });
+  $('pttText').textContent = 'Push-to-talk: говорить, пока держишь кнопку на экране';
+  pttLabel = 'кнопку ниже';
+  $('copy').textContent = 'Скопировать код';
+  $('ovHint').textContent = 'Оверлей появляется поверх других приложений, когда DVoice свёрнут. Нужно разрешение «Поверх других приложений».';
+  try { const inf = JSON.parse(ANDROID.info()); $('ver').textContent = 'v' + inf.web + ' · android'; } catch (e) {}
+
+  // PTT кнопкой на экране
+  const hold = $('pttHold');
+  hold.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (!pttHeld) { pttHeld = true; hold.classList.add('down'); applyMute(); }
+  });
+  const holdUp = () => { if (pttHeld) { pttHeld = false; hold.classList.remove('down'); applyMute(); } };
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => hold.addEventListener(t, holdUp));
+  hold.addEventListener('contextmenu', e => e.preventDefault());
+
+  // оверлей
+  const readOv = () => { try { return JSON.parse(ANDROID.getOverlay()); } catch (e) { return null; } };
+  const o0 = readOv();
+  if (o0) { overlayOn = !!o0.enabled; $('ovChk').checked = overlayOn; $('ovCorner').value = o0.corner || 'tr'; }
+  const applyOv = () => {
+    const want = $('ovChk').checked;
+    const o = readOv();
+    if (want && o && !o.permission) ANDROID.requestOverlayPermission();
+    ANDROID.setOverlay(want, $('ovCorner').value);
+    overlayOn = want;
+    lastOv = '';
+  };
+  $('ovChk').onchange = applyOv;
+  $('ovCorner').onchange = applyOv;
+
+  // батарея
+  const refreshBatt = () => { try { $('battState').textContent = ANDROID.batteryIgnored() ? 'включено' : 'выключено'; } catch (e) {} };
+  refreshBatt();
+  $('battBtn').onclick = () => ANDROID.ignoreBattery();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBatt(); });
+
+  // обновление страницы
+  window.dvUpdate = s => {
+    if (!s) return;
+    if (s.status === 'staged') {
+      $('banner').hidden = false;
+      $('bannerText').textContent = 'Скачана новая версия ' + s.version + '.';
+      $('updStatus').textContent = 'готово к установке: ' + s.version;
+      if ($('call').hidden) {
+        $('bannerText').textContent = 'Обновляю до ' + s.version + '…';
+        $('bannerBtn').hidden = true;
+        setTimeout(() => location.reload(), 1500);
+      } else {
+        $('bannerBtn').hidden = false;
+      }
+    } else if (s.status === 'needs-new-app') {
+      $('banner').hidden = false;
+      $('bannerText').textContent = s.message || 'Нужна новая версия приложения';
+      $('bannerBtn').hidden = true;
+    } else if (s.status === 'uptodate') {
+      $('updStatus').textContent = 'у тебя последняя версия';
+    } else if (s.status === 'error') {
+      $('updStatus').textContent = 'не удалось проверить';
+    }
+  };
+  $('bannerBtn').onclick = () => location.reload();
+  $('updBtn').onclick = () => { $('updStatus').textContent = 'проверяю…'; ANDROID.checkUpdate(); };
+}
+
 async function fillMics() {
   try {
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
@@ -790,9 +921,265 @@ async function changeMic(e) {
   }
 }
 
+// ---------- демонстрация экрана ----------
+// Видео идёт отдельным звонком и только пока показ включён и зритель нажал/согласился смотреть.
+const QUALITY = {
+  low:  { w: 1280, h: 720,  fps: 15, bps: 1000000 },
+  mid:  { w: 1280, h: 720,  fps: 30, bps: 2500000 },
+  high: { w: 1920, h: 1080, fps: 30, bps: 5000000 }
+};
+let shareStream = null;
+const screenOut = {};   // rid -> call: мы показываем этому человеку
+const screenIn = {};    // rid -> { call, box, video, state, timer }: мы смотрим
+const invites = {};     // rid -> true: человек показывает экран, мы ещё не смотрим
+let inviteNote = '';
+
+function sendTo(rid, msg) {
+  const dc = dataConns[rid];
+  try { if (dc && dc.open) { dc.send(msg); return true; } } catch (e) {}
+  return false;
+}
+function broadcast(msg) { for (const rid of Object.keys(peers)) sendTo(rid, msg); }
+
+function handleScreenMsg(rid, m) {
+  if (ANDROID) return;   // на телефоне демонстрацию не принимаем
+  if (m === 'start') {
+    if (screenIn[rid] || invites[rid]) return;
+    addChat('', displayName(rid) + ' показывает экран', 'sys');
+    if ($('autoWatch').checked) startWatch(rid);
+    else { invites[rid] = true; renderInvites(); }
+  } else if (m === 'stop') {
+    const was = screenIn[rid] || invites[rid];
+    delete invites[rid];
+    closeWatch(rid, true);
+    renderInvites();
+    if (was) addChat('', displayName(rid) + ' остановил показ экрана', 'sys');
+  } else if (m === 'watch') {
+    onScreenWatch(rid);
+  } else if (m === 'unwatch') {
+    closeScreenOut(rid);
+  }
+}
+
+// --- показываем мы ---
+async function openPicker() {
+  $('picker').hidden = false;
+  $('pickerList').textContent = 'Загружаю список…';
+  let list = [];
+  try { list = await NATIVE.screenSources(); } catch (e) {}
+  const box = $('pickerList');
+  box.textContent = '';
+  if (!list.length) { box.textContent = 'Не нашёл экранов и окон для показа.'; return; }
+  for (const it of list) {
+    const b = document.createElement('button');
+    b.className = 'pitem';
+    const img = document.createElement('img');
+    img.src = it.thumb;
+    img.alt = '';
+    const t = document.createElement('span');
+    t.textContent = it.name;
+    b.append(img, t);
+    b.onclick = () => { $('picker').hidden = true; startShare(it.id); };
+    box.append(b);
+  }
+}
+$('pickerCancel').onclick = () => { $('picker').hidden = true; };
+
+async function startShare(sourceId) {
+  const q = QUALITY[$('shareQ').value] || QUALITY.mid;
+  const wantAudio = $('shareAudio').checked;
+  try {
+    if (NATIVE) await NATIVE.screenChoose({ id: sourceId, audio: wantAudio });
+    shareStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: { ideal: q.fps, max: q.fps }, width: { max: q.w }, height: { max: q.h } },
+      audio: wantAudio
+    });
+  } catch (e) {
+    shareStream = null;
+    setStatus('Показ экрана не включился');
+    return;
+  }
+  const vt = shareStream.getVideoTracks()[0];
+  try { vt.contentHint = 'motion'; } catch (e) {}
+  vt.addEventListener('ended', stopShare);
+  updateShareUI();
+  broadcast({ screen: 'start' });
+  addChat('', 'Ты показываешь экран', 'sys');
+}
+
+function stopShare() {
+  if (!shareStream) return;
+  const st = shareStream;
+  shareStream = null;
+  broadcast({ screen: 'stop' });
+  Object.keys(screenOut).forEach(closeScreenOut);
+  st.getTracks().forEach(t => t.stop());
+  updateShareUI();
+  addChat('', 'Ты остановил показ экрана', 'sys');
+}
+
+function closeScreenOut(rid) {
+  const c = screenOut[rid];
+  if (c) { delete screenOut[rid]; try { c.close(); } catch (e) {} }
+  updateShareUI();
+}
+
+function onScreenWatch(rid) {
+  if (!shareStream || !peer || peer.destroyed) return;
+  closeScreenOut(rid);
+  const call = peer.call(rid, shareStream, { metadata: { type: 'screen' } });
+  screenOut[rid] = call;
+  call.on('close', () => { if (screenOut[rid] === call) { delete screenOut[rid]; updateShareUI(); } });
+  call.on('error', () => {});
+  [500, 2500, 6000].forEach(ms => setTimeout(() => tuneSender(call), ms));
+  updateShareUI();
+}
+
+// Ограничиваем битрейт, частоту кадров и разрешение: именно это определяет расход трафика
+async function tuneSender(call) {
+  const pc = call.peerConnection;
+  if (!pc) return;
+  const q = QUALITY[$('shareQ').value] || QUALITY.mid;
+  for (const s of pc.getSenders()) {
+    if (!s.track || s.track.kind !== 'video') continue;
+    try {
+      const p = s.getParameters();
+      if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+      const w = (s.track.getSettings && s.track.getSettings().width) || q.w;
+      p.encodings[0].maxBitrate = q.bps;
+      p.encodings[0].maxFramerate = q.fps;
+      p.encodings[0].scaleResolutionDownBy = Math.max(1, w / q.w);
+      await s.setParameters(p);
+    } catch (e) {}
+  }
+}
+
+function updateShareUI() {
+  const on = !!shareStream;
+  $('shareBtn').textContent = on ? 'Остановить показ' : 'Показать экран';
+  $('shareBtn').classList.toggle('off', on);
+  renderInvites();
+}
+
+// --- смотрим мы ---
+function startWatch(rid) {
+  if (screenIn[rid]) return;
+  delete invites[rid];
+  const ui = buildScreenBox(rid);
+  const w = { call: null, box: ui.el, video: ui.video, state: ui.state, timer: null };
+  screenIn[rid] = w;
+  w.state.textContent = 'подключаюсь…';
+  sendTo(rid, { screen: 'watch' });
+  w.timer = setTimeout(() => {
+    if (screenIn[rid] === w && !w.video.srcObject) {
+      closeWatch(rid, false);
+      invites[rid] = true;
+      inviteNote = 'не удалось подключиться к показу экрана';
+      renderInvites();
+    }
+  }, 15000);
+  renderInvites();
+}
+
+function acceptScreen(call) {
+  const rid = call.peer;
+  const w = screenIn[rid];
+  if (!w) { call.close(); return; }          // мы не просили этот показ
+  call.answer();                             // без своего видео: только принимаем
+  w.call = call;
+  call.on('stream', rs => {
+    clearTimeout(w.timer);
+    if (w.video.srcObject !== rs) w.video.srcObject = rs;
+    w.video.play().catch(() => {});
+    w.state.textContent = '';
+  });
+  call.on('close', () => { if (screenIn[rid] && screenIn[rid].call === call) { closeWatch(rid, true); renderInvites(); } });
+  call.on('error', () => {});
+}
+
+function closeWatch(rid, remoteClosed) {
+  const w = screenIn[rid];
+  if (!w) return;
+  delete screenIn[rid];
+  clearTimeout(w.timer);
+  try { if (w.call) w.call.close(); } catch (e) {}
+  w.video.srcObject = null;
+  w.box.remove();
+  if (!remoteClosed) sendTo(rid, { screen: 'unwatch' });
+}
+
+function buildScreenBox(rid) {
+  const el = document.createElement('div');
+  el.className = 'screenBox';
+  const bar = document.createElement('div');
+  bar.className = 'bar';
+  const who = document.createElement('span');
+  who.className = 'who';
+  who.textContent = displayName(rid) + ': экран';
+  const state = document.createElement('span');
+  state.className = 'state';
+  const mk = (text, fn) => { const b = document.createElement('button'); b.className = 'small'; b.textContent = text; b.onclick = fn; return b; };
+  const video = document.createElement('video');
+  video.autoplay = true;
+  video.playsInline = true;
+  const muteBtn = mk('Звук', () => { video.muted = !video.muted; muteBtn.textContent = video.muted ? 'Без звука' : 'Звук'; });
+  const fsBtn = mk('Во весь экран', () => { if (video.requestFullscreen) video.requestFullscreen().catch(() => {}); });
+  const closeBtn = mk('Закрыть', () => {
+    closeWatch(rid, false);
+    invites[rid] = true;
+    inviteNote = '';
+    renderInvites();
+  });
+  bar.append(who, state, muteBtn, fsBtn, closeBtn);
+  el.append(bar, video);
+  $('screens').append(el);
+  return { el, video, state };
+}
+
+function renderInvites() {
+  const host = $('screens');
+  host.querySelectorAll('.invite').forEach(n => n.remove());
+  const mkBar = (text, btnText, fn, mine) => {
+    const d = document.createElement('div');
+    d.className = 'invite' + (mine ? ' mine' : '');
+    const t = document.createElement('span');
+    t.textContent = text;
+    d.append(t);
+    if (btnText) { const b = document.createElement('button'); b.className = 'small'; b.textContent = btnText; b.onclick = fn; d.append(b); }
+    host.prepend(d);
+  };
+  if (shareStream) {
+    const n = Object.keys(screenOut).length;
+    mkBar('Ты показываешь экран · смотрят: ' + n, 'Остановить', stopShare, true);
+  }
+  for (const rid of Object.keys(invites)) {
+    mkBar(displayName(rid) + ' показывает экран' + (inviteNote ? ' (' + inviteNote + ')' : ''), 'Смотреть', () => { inviteNote = ''; startWatch(rid); }, false);
+  }
+}
+
+$('shareBtn').onclick = () => {
+  if (shareStream) stopShare();
+  else if (NATIVE) openPicker();
+  else startShare(null);
+};
+['shareQ', 'shareAudio', 'autoWatch'].forEach(id => {
+  const el = $(id);
+  const key = 'vc_' + id;
+  const saved = store.get(key);
+  if (saved !== null) { if (el.type === 'checkbox') el.checked = saved === '1'; else el.value = saved; }
+  el.onchange = () => {
+    store.set(key, el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value);
+    if (id === 'shareQ') Object.values(screenOut).forEach(c => tuneSender(c));
+  };
+});
+
 // ---------- выход ----------
 function leave() {
   clearInterval(meter); clearInterval(hb); clearInterval(wd);
+  stopShare();
+  Object.keys(screenIn).forEach(rid => closeWatch(rid, true));
+  Object.keys(invites).forEach(k => delete invites[k]);
+  $('screens').textContent = '';
   sayBye();
   Object.keys(peers).forEach(rid => removePeer(rid, true));
   Object.keys(announced).forEach(k => delete announced[k]);
@@ -801,7 +1188,8 @@ function leave() {
   if (p && !p.destroyed) setTimeout(() => { try { p.destroy(); } catch (e) {} }, 200);
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; track = null; me = null;
-  if (NATIVE && overlayOn) NATIVE.overlayUpdate([]);
+  if (overlayOn) ovSend([]);
+  if (ANDROID) ANDROID.stopCall();
   lastOv = '';
   if (audioCtx) { const c = audioCtx; setTimeout(() => c.close().catch(() => {}), 400); audioCtx = null; }
   $('people').innerHTML = '';
