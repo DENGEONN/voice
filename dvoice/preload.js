@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('vcNative', {
   onPtt: cb => ipcRenderer.on('ptt:state', (_e, down) => cb(!!down)),
   onMuteToggle: cb => ipcRenderer.on('mute:toggle', () => cb()),
   getIce: () => ipcRenderer.invoke('ice:get'),
+  screenSources: () => ipcRenderer.invoke('screen:sources'),
+  screenChoose: v => ipcRenderer.invoke('screen:choose', v),
   getOverlay: () => ipcRenderer.invoke('overlay:get'),
   setOverlay: v => ipcRenderer.invoke('overlay:set', v),
   overlayUpdate: list => ipcRenderer.send('overlay:update', list),

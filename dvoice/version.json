@@ -1,11 +1,11 @@
 {
-  "version": "1.0.0",
-  "notes": "первая версия DVoice",
+  "version": "1.0.1",
+  "notes": "показ экрана",
   "minShell": 1,
   "files": {
-    "main.js": "45de5454b258ed7e5d504ccb33198cd89b73b2f3e304e495753eceacde1ffc14",
-    "preload.js": "02134a569aab608f63160a05188cfd63020adb73076eebf308b5b3993a8b7b7b",
-    "index.html": "4f35979931282bb51cbdbf4742c2d6c5e79dc8f89069dba3f5b04108c71face4",
+    "main.js": "3735b035b6ed2db5f69864f16976f1db7de4ea17d9e759460ea9cdc1386ef5fa",
+    "preload.js": "f41ed090e1bb276dd661706adb92160066f35d038d46dee68089d2f41a09eec0",
+    "index.html": "b4229776f02ad02e47fe341b84e25213293108d64dd1f827c51ba84f58fbad1a",
     "overlay.html": "1274d73ab71764059a4836deff9d017fc04efde152206e84292079960d02d906",
     "overlay-preload.js": "1a6b213bfa2af26b807eba0797c8a42f60478eb250711bf81313ecfe5b1cc72f",
     "updater.js": "9da3f8600d47553e145603ef6c3096795bd22eaf24921b1cdd2bc7e7b04551c8",

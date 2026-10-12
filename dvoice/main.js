@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, screen, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { checkAndStage, cmpVer } = require('./updater');
@@ -184,6 +184,24 @@ ipcMain.on('overlay:update', (_e, list) => {
   pushOverlay();
 });
 
+// ---------- показ экрана ----------
+let pendingSource = null;   // { id, audio }: выбор пользователя из нашего окна выбора
+
+ipcMain.handle('screen:sources', async () => {
+  const srcs = await desktopCapturer.getSources({
+    types: ['screen', 'window'],
+    thumbnailSize: { width: 320, height: 180 },
+    fetchWindowIcons: false
+  });
+  return srcs
+    .filter(s => !/^DVoice/.test(s.name))
+    .map(s => ({ id: s.id, name: s.name, thumb: s.thumbnail.toDataURL() }));
+});
+ipcMain.handle('screen:choose', (_e, v) => {
+  pendingSource = (v && typeof v.id === 'string') ? { id: v.id, audio: !!v.audio } : null;
+  return true;
+});
+
 // ---------- автообновление ----------
 let stagedVersion = null;
 let checking = false;
@@ -213,8 +231,8 @@ ipcMain.handle('update:apply', () => { app.relaunch(); app.exit(0); });
 // ---------- окно ----------
 function createWindow() {
   win = new BrowserWindow({
-    width: 480,
-    height: 820,
+    width: 520,
+    height: 860,
     minWidth: 400,
     minHeight: 560,
     backgroundColor: '#11151c',
@@ -247,8 +265,20 @@ if (!gotLock) {
 } else {
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
   app.whenReady().then(() => {
-    session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => cb(permission === 'media'));
-    session.defaultSession.setPermissionCheckHandler((wc, permission) => permission === 'media');
+    const okPerm = p => p === 'media' || p === 'display-capture';
+    session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => cb(okPerm(permission)));
+    session.defaultSession.setPermissionCheckHandler((wc, permission) => okPerm(permission));
+    session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+      try {
+        const pick = pendingSource;
+        pendingSource = null;
+        if (!pick) return callback({});          // без выбора в нашем окне ничего не отдаём
+        const srcs = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+        const src = srcs.find(s => s.id === pick.id);
+        if (!src) return callback({});
+        callback(pick.audio ? { video: src, audio: 'loopback' } : { video: src });
+      } catch (e) { callback({}); }
+    });
     createWindow();
     if (uio) { try { uio.start(); } catch (e) { console.error(e); } }
     if (overlayCfg.enabled) applyOverlay();
