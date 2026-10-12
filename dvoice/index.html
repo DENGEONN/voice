@@ -113,6 +113,8 @@
   .pitem { display: grid; grid-template-columns: 128px 1fr; gap: 10px; align-items: center; width: 100%; text-align: left; margin-bottom: 8px; padding: 6px; }
   .pitem img { width: 128px; height: 72px; object-fit: cover; border-radius: 6px; background: #000; }
   .pitem span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  #pttHold { width: 100%; margin-bottom: 14px; padding: 22px 16px; font-size: 18px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  #pttHold.down { background: var(--speak); color: #1b1405; border-color: var(--speak); }
   #status { color: var(--muted); font-size: 14px; min-height: 1.4em; }
   @media (prefers-reduced-motion: reduce) { .ava { transition: none; } }
 </style>
@@ -151,10 +153,12 @@
 
     <div class="controls">
       <button id="muteBtn">Выключить микрофон</button>
-      <button id="shareBtn">Показать экран</button>
+      <button id="shareBtn" class="no-android">Показать экран</button>
       <button id="chatBtn">Чат<span id="unread" hidden>0</span></button>
       <button id="leave" class="danger">Выйти</button>
     </div>
+
+    <button id="pttHold" hidden>Удерживай, чтобы говорить</button>
 
     <div id="chat" hidden>
       <div id="chatLog" aria-live="polite"></div>
@@ -168,10 +172,10 @@
       <summary>Настройки</summary>
 
       <label class="opt"><input type="checkbox" id="ptt"> <span id="pttText">Push-to-talk: говорить, пока зажат Пробел</span></label>
-      <div class="opt native-only" id="pttBind" hidden>
+      <div class="opt native-only no-android" id="pttBind" hidden>
         <button class="small" id="pttBtn">Клавиша PTT</button><span class="val" id="pttKey"></span>
       </div>
-      <div class="opt native-only" id="muteBind" hidden>
+      <div class="opt native-only no-android" id="muteBind" hidden>
         <button class="small" id="muteKeyBtn">Клавиша мута</button><span class="val" id="muteKey"></span>
         <button class="small" id="muteKeyClear">Сбросить</button>
       </div>
@@ -189,6 +193,7 @@
       </div>
       <p class="hint native-only" id="ovHint" hidden>Оверлей виден в играх в режиме «окно без рамки» (не в эксклюзивном полноэкранном).</p>
 
+      <div id="shareSettings" class="no-android">
       <div class="opt">
         <span>Показ экрана:</span>
         <select id="shareQ" aria-label="Качество показа экрана">
@@ -200,10 +205,15 @@
       <label class="opt"><input type="checkbox" id="shareAudio"> Передавать звук системы (друзья услышат и свой голос с задержкой)</label>
       <label class="opt"><input type="checkbox" id="autoWatch" checked> Сразу смотреть, когда кто-то показывает экран</label>
       <p class="hint">Трафик на экран идёт, только пока показ включён, и только тем, кто смотрит. Скорость указана на каждого зрителя.</p>
+      </div>
 
       <label class="field" style="margin-top:8px">Микрофон
         <select id="mic"></select>
       </label>
+
+      <div class="opt android-only" id="battRow" hidden>
+        <button class="small" id="battBtn">Не усыплять приложение</button><span id="battState"></span>
+      </div>
 
       <div class="opt native-only" id="updRow" hidden>
         <button class="small" id="updBtn">Проверить обновления</button><span id="updStatus"></span>
@@ -254,6 +264,7 @@ const store = {
 };
 
 const NATIVE = window.vcNative;
+const ANDROID = window.DVAndroid;
 let ICE_SERVERS = ICE_DEFAULT;
 let customIce = false;
 let pttLabel = 'Пробел';
@@ -296,13 +307,19 @@ $('muteBtn').onclick = toggleMute;
 $('ptt').onchange = () => { store.set('vc_ptt', $('ptt').checked ? '1' : '0'); applyMute(); };
 $('sounds').onchange = () => store.set('vc_sounds', $('sounds').checked ? '1' : '0');
 $('copy').onclick = async () => {
-  const url = NATIVE ? room : location.origin + location.pathname + '#room=' + encodeURIComponent(room);
-  try { await navigator.clipboard.writeText(url); setStatus(NATIVE ? 'Код комнаты скопирован' : 'Ссылка скопирована'); }
+  const url = (NATIVE || ANDROID) ? room : location.origin + location.pathname + '#room=' + encodeURIComponent(room);
+  try { await navigator.clipboard.writeText(url); setStatus((NATIVE || ANDROID) ? 'Код комнаты скопирован' : 'Ссылка скопирована'); }
   catch (e) { setStatus(url); }
 };
 $('mic').onchange = changeMic;
-window.addEventListener('beforeunload', () => { sayBye(); if (peer && !peer.destroyed) peer.destroy(); });
+window.addEventListener('beforeunload', () => { sayBye(); if (ANDROID) ANDROID.stopCall(); if (peer && !peer.destroyed) peer.destroy(); });
 
+function ovSend(list) {
+  try {
+    if (NATIVE) NATIVE.overlayUpdate(list);
+    else if (ANDROID) ANDROID.overlayUpdate(JSON.stringify(list));
+  } catch (e) {}
+}
 function setErr(t) { $('err').textContent = t || ''; }
 function setStatus(t) { $('status').textContent = t || ''; }
 
@@ -403,6 +420,7 @@ async function join() {
   store.set('vc_name', myName);
   store.set('vc_room', room);
   track = stream.getAudioTracks()[0];
+  if (ANDROID) ANDROID.startCall(room);
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   audioCtx.resume();
@@ -687,9 +705,9 @@ function startMeter() {
       pr.li.classList.toggle('speaking', sp);
       list.push({ name: displayName(rid), speaking: sp, me: false });
     }
-    if (NATIVE && overlayOn) {
+    if ((NATIVE || ANDROID) && overlayOn) {
       const sig = JSON.stringify(list);
-      if (sig !== lastOv) { lastOv = sig; NATIVE.overlayUpdate(list); }
+      if (sig !== lastOv) { lastOv = sig; ovSend(list); }
     }
   }, 100);
 }
@@ -701,6 +719,7 @@ function applyMute() {
   if (track) track.enabled = open;
   $('muteBtn').textContent = muted ? 'Включить микрофон' : 'Выключить микрофон';
   $('muteBtn').classList.toggle('off', muted);
+  $('pttHold').hidden = !(ANDROID && ptt);
   if (me) {
     me.li.classList.toggle('muted', !open);
     me.li.querySelector('.sub').textContent = muted ? 'микрофон выключен' : (ptt ? (pttHeld ? 'говоришь' : 'держи ' + pttLabel + ', чтобы говорить') : '');
@@ -795,6 +814,75 @@ if (NATIVE) {
   };
 }
 
+// ---------- Android ----------
+if (ANDROID) {
+  document.querySelectorAll('.native-only, .android-only').forEach(el => { el.hidden = false; });
+  document.querySelectorAll('.no-android').forEach(el => { el.hidden = true; });
+  $('pttText').textContent = 'Push-to-talk: говорить, пока держишь кнопку на экране';
+  pttLabel = 'кнопку ниже';
+  $('copy').textContent = 'Скопировать код';
+  $('ovHint').textContent = 'Оверлей появляется поверх других приложений, когда DVoice свёрнут. Нужно разрешение «Поверх других приложений».';
+  try { const inf = JSON.parse(ANDROID.info()); $('ver').textContent = 'v' + inf.web + ' · android'; } catch (e) {}
+
+  // PTT кнопкой на экране
+  const hold = $('pttHold');
+  hold.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (!pttHeld) { pttHeld = true; hold.classList.add('down'); applyMute(); }
+  });
+  const holdUp = () => { if (pttHeld) { pttHeld = false; hold.classList.remove('down'); applyMute(); } };
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => hold.addEventListener(t, holdUp));
+  hold.addEventListener('contextmenu', e => e.preventDefault());
+
+  // оверлей
+  const readOv = () => { try { return JSON.parse(ANDROID.getOverlay()); } catch (e) { return null; } };
+  const o0 = readOv();
+  if (o0) { overlayOn = !!o0.enabled; $('ovChk').checked = overlayOn; $('ovCorner').value = o0.corner || 'tr'; }
+  const applyOv = () => {
+    const want = $('ovChk').checked;
+    const o = readOv();
+    if (want && o && !o.permission) ANDROID.requestOverlayPermission();
+    ANDROID.setOverlay(want, $('ovCorner').value);
+    overlayOn = want;
+    lastOv = '';
+  };
+  $('ovChk').onchange = applyOv;
+  $('ovCorner').onchange = applyOv;
+
+  // батарея
+  const refreshBatt = () => { try { $('battState').textContent = ANDROID.batteryIgnored() ? 'включено' : 'выключено'; } catch (e) {} };
+  refreshBatt();
+  $('battBtn').onclick = () => ANDROID.ignoreBattery();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBatt(); });
+
+  // обновление страницы
+  window.dvUpdate = s => {
+    if (!s) return;
+    if (s.status === 'staged') {
+      $('banner').hidden = false;
+      $('bannerText').textContent = 'Скачана новая версия ' + s.version + '.';
+      $('updStatus').textContent = 'готово к установке: ' + s.version;
+      if ($('call').hidden) {
+        $('bannerText').textContent = 'Обновляю до ' + s.version + '…';
+        $('bannerBtn').hidden = true;
+        setTimeout(() => location.reload(), 1500);
+      } else {
+        $('bannerBtn').hidden = false;
+      }
+    } else if (s.status === 'needs-new-app') {
+      $('banner').hidden = false;
+      $('bannerText').textContent = s.message || 'Нужна новая версия приложения';
+      $('bannerBtn').hidden = true;
+    } else if (s.status === 'uptodate') {
+      $('updStatus').textContent = 'у тебя последняя версия';
+    } else if (s.status === 'error') {
+      $('updStatus').textContent = 'не удалось проверить';
+    }
+  };
+  $('bannerBtn').onclick = () => location.reload();
+  $('updBtn').onclick = () => { $('updStatus').textContent = 'проверяю…'; ANDROID.checkUpdate(); };
+}
+
 async function fillMics() {
   try {
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
@@ -854,6 +942,7 @@ function sendTo(rid, msg) {
 function broadcast(msg) { for (const rid of Object.keys(peers)) sendTo(rid, msg); }
 
 function handleScreenMsg(rid, m) {
+  if (ANDROID) return;   // на телефоне демонстрацию не принимаем
   if (m === 'start') {
     if (screenIn[rid] || invites[rid]) return;
     addChat('', displayName(rid) + ' показывает экран', 'sys');
@@ -1099,7 +1188,8 @@ function leave() {
   if (p && !p.destroyed) setTimeout(() => { try { p.destroy(); } catch (e) {} }, 200);
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; track = null; me = null;
-  if (NATIVE && overlayOn) NATIVE.overlayUpdate([]);
+  if (overlayOn) ovSend([]);
+  if (ANDROID) ANDROID.stopCall();
   lastOv = '';
   if (audioCtx) { const c = audioCtx; setTimeout(() => c.close().catch(() => {}), 400); audioCtx = null; }
   $('people').innerHTML = '';

@@ -1,11 +1,11 @@
 {
-  "version": "1.0.1",
-  "notes": "показ экрана",
+  "version": "1.0.2",
+  "notes": "Android-версия, показ экрана, чат, оверлей",
   "minShell": 1,
   "files": {
     "main.js": "3735b035b6ed2db5f69864f16976f1db7de4ea17d9e759460ea9cdc1386ef5fa",
     "preload.js": "f41ed090e1bb276dd661706adb92160066f35d038d46dee68089d2f41a09eec0",
-    "index.html": "b4229776f02ad02e47fe341b84e25213293108d64dd1f827c51ba84f58fbad1a",
+    "index.html": "d529493ff6813c80f59233b2618031f25b91c7af90c1d142ea9557e4981a9f6d",
     "overlay.html": "1274d73ab71764059a4836deff9d017fc04efde152206e84292079960d02d906",
     "overlay-preload.js": "1a6b213bfa2af26b807eba0797c8a42f60478eb250711bf81313ecfe5b1cc72f",
     "updater.js": "9da3f8600d47553e145603ef6c3096795bd22eaf24921b1cdd2bc7e7b04551c8",
