@@ -1,11 +1,12 @@
 {
-  "version": "1.0.2",
-  "notes": "Android-версия, показ экрана, чат, оверлей",
+  "version": "1.0.3",
+  "notes": "камеры, просмотр экрана на телефоне",
   "minShell": 1,
+  "minAndroid": 2,
   "files": {
     "main.js": "3735b035b6ed2db5f69864f16976f1db7de4ea17d9e759460ea9cdc1386ef5fa",
     "preload.js": "f41ed090e1bb276dd661706adb92160066f35d038d46dee68089d2f41a09eec0",
-    "index.html": "d529493ff6813c80f59233b2618031f25b91c7af90c1d142ea9557e4981a9f6d",
+    "index.html": "84beb45ad117d0a7d02f0df51db681b8ef625437eaf9228db0c3fa825171fff9",
     "overlay.html": "1274d73ab71764059a4836deff9d017fc04efde152206e84292079960d02d906",
     "overlay-preload.js": "1a6b213bfa2af26b807eba0797c8a42f60478eb250711bf81313ecfe5b1cc72f",
     "updater.js": "9da3f8600d47553e145603ef6c3096795bd22eaf24921b1cdd2bc7e7b04551c8",

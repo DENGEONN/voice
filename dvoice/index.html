@@ -113,6 +113,9 @@
   .pitem { display: grid; grid-template-columns: 128px 1fr; gap: 10px; align-items: center; width: 100%; text-align: left; margin-bottom: 8px; padding: 6px; }
   .pitem img { width: 128px; height: 72px; object-fit: cover; border-radius: 6px; background: #000; }
   .pitem span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  #people li:has(.camBox:not([hidden])) { align-items: start; }
+  .camBox video { display: block; width: 100%; max-width: 280px; border-radius: 10px; margin-top: 8px; background: #000; }
+  .camBox video.mirror { transform: scaleX(-1); }
   #pttHold { width: 100%; margin-bottom: 14px; padding: 22px 16px; font-size: 18px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   #pttHold.down { background: var(--speak); color: #1b1405; border-color: var(--speak); }
   #status { color: var(--muted); font-size: 14px; min-height: 1.4em; }
@@ -154,6 +157,8 @@
     <div class="controls">
       <button id="muteBtn">Выключить микрофон</button>
       <button id="shareBtn" class="no-android">Показать экран</button>
+      <button id="camBtn">Включить камеру</button>
+      <button id="camFlip" hidden>Развернуть</button>
       <button id="chatBtn">Чат<span id="unread" hidden>0</span></button>
       <button id="leave" class="danger">Выйти</button>
     </div>
@@ -203,9 +208,21 @@
         </select>
       </div>
       <label class="opt"><input type="checkbox" id="shareAudio"> Передавать звук системы (друзья услышат и свой голос с задержкой)</label>
-      <label class="opt"><input type="checkbox" id="autoWatch" checked> Сразу смотреть, когда кто-то показывает экран</label>
       <p class="hint">Трафик на экран идёт, только пока показ включён, и только тем, кто смотрит. Скорость указана на каждого зрителя.</p>
       </div>
+
+      <label class="opt"><input type="checkbox" id="autoWatch" checked> Сразу смотреть, когда кто-то показывает экран</label>
+      <div class="opt">
+        <span>Камера:</span>
+        <select id="camQ" aria-label="Качество камеры">
+          <option value="low">экономно: 270p, 15 к/с (~0,3 Мбит/с)</option>
+          <option value="mid" selected>обычно: 360p, 24 к/с (~0,6 Мбит/с)</option>
+          <option value="high">высоко: 720p, 30 к/с (~1,5 Мбит/с)</option>
+        </select>
+      </div>
+      <div class="opt no-android"><span>Устройство:</span><select id="camSel" aria-label="Камера"></select></div>
+      <label class="opt"><input type="checkbox" id="camAuto" checked> Показывать камеры других</label>
+      <p class="hint">Видео идёт, только пока камера включена, и только тем, кто её смотрит. Скорость указана на каждого зрителя.</p>
 
       <label class="field" style="margin-top:8px">Микрофон
         <select id="mic"></select>
@@ -461,6 +478,7 @@ function connectSlot(n) {
 
   p.on('call', call => {
     if (call.metadata && call.metadata.type === 'screen') { acceptScreen(call); return; }
+    if (call.metadata && call.metadata.type === 'cam') { acceptCam(call); return; }
     call.answer(stream);
     setupCall(call, 'in', 0);
   });
@@ -500,7 +518,7 @@ function announceJoin(rid) {
 function setupData(conn) {
   const rid = conn.peer;
   dataConns[rid] = conn;
-  conn.on('open', () => { try { conn.send({ name: myName }); if (shareStream) conn.send({ screen: 'start' }); } catch (e) {} });
+  conn.on('open', () => { try { conn.send({ name: myName }); if (shareStream) conn.send({ screen: 'start' }); if (camStream) conn.send({ cam: 'start' }); } catch (e) {} });
   conn.on('data', d => {
     if (!d) return;
     const pr = peers[rid];
@@ -511,6 +529,7 @@ function setupData(conn) {
     }
     if (typeof d.chat === 'string') addChat(displayName(rid), d.chat.slice(0, 500), 'them');
     if (d.screen) handleScreenMsg(rid, d.screen);
+    if (d.cam) handleCamMsg(rid, d.cam);
     if (d.bye) removePeer(rid);
   });
   conn.on('close', () => { if (dataConns[rid] === conn) delete dataConns[rid]; });
@@ -605,6 +624,7 @@ function removePeer(rid, silent) {
   delete peers[rid];
   const name = displayName(rid);
   closeWatch(rid, true); closeScreenOut(rid); delete invites[rid]; renderInvites();
+  closeCamIn(rid); closeCamOut(rid); delete camSenders[rid];
   try { pr.call.close(); } catch (e) {}
   pr.audio.pause();
   pr.audio.srcObject = null;
@@ -666,6 +686,7 @@ function addPerson(label, st, isMe) {
     '<div class="ava"></div>' +
     '<div><div class="nm"></div><div class="sub"></div>' +
     (isMe ? '' : '<input type="range" min="0" max="1" step="0.01" value="1" aria-label="Громкость">') +
+    '<div class="camBox" hidden><video autoplay playsinline muted></video></div>' +
     '</div>';
   li.querySelector('.nm').textContent = label;
   li.querySelector('.ava').textContent = label.trim().charAt(0).toUpperCase() || '?';
@@ -942,7 +963,6 @@ function sendTo(rid, msg) {
 function broadcast(msg) { for (const rid of Object.keys(peers)) sendTo(rid, msg); }
 
 function handleScreenMsg(rid, m) {
-  if (ANDROID) return;   // на телефоне демонстрацию не принимаем
   if (m === 'start') {
     if (screenIn[rid] || invites[rid]) return;
     addChat('', displayName(rid) + ' показывает экран', 'sys');
@@ -1037,9 +1057,11 @@ function onScreenWatch(rid) {
 
 // Ограничиваем битрейт, частоту кадров и разрешение: именно это определяет расход трафика
 async function tuneSender(call) {
+  return tuneVideoSender(call, QUALITY[$('shareQ').value] || QUALITY.mid);
+}
+async function tuneVideoSender(call, q) {
   const pc = call.peerConnection;
   if (!pc) return;
-  const q = QUALITY[$('shareQ').value] || QUALITY.mid;
   for (const s of pc.getSenders()) {
     if (!s.track || s.track.kind !== 'video') continue;
     try {
@@ -1162,6 +1184,7 @@ $('shareBtn').onclick = () => {
   else if (NATIVE) openPicker();
   else startShare(null);
 };
+if (ANDROID && store.get('vc_autoWatch') === null) $('autoWatch').checked = false;
 ['shareQ', 'shareAudio', 'autoWatch'].forEach(id => {
   const el = $(id);
   const key = 'vc_' + id;
@@ -1173,10 +1196,211 @@ $('shareBtn').onclick = () => {
   };
 });
 
+// ---------- камера ----------
+// Как и показ экрана: видео идёт отдельным звонком, только пока камера включена и у зрителя включён приём.
+const CAM_Q = {
+  low:  { w: 480,  h: 270, fps: 15, bps: 300000 },
+  mid:  { w: 640,  h: 360, fps: 24, bps: 600000 },
+  high: { w: 1280, h: 720, fps: 30, bps: 1500000 }
+};
+let camStream = null;
+let camFacing = 'user';
+const camOut = {};      // rid -> call: мы отправляем камеру этому человеку
+const camIn = {};       // rid -> { call }: мы получаем его камеру
+const camSenders = {};  // rid -> true: у человека включена камера
+const camWanted = {};   // rid -> true: мы попросили его камеру
+
+function camQuality() { return CAM_Q[$('camQ').value] || CAM_Q.mid; }
+
+function camConstraints() {
+  const q = camQuality();
+  const v = { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } };
+  if (ANDROID) v.facingMode = camFacing;
+  else if ($('camSel').value) v.deviceId = { exact: $('camSel').value };
+  return { video: v };
+}
+
+async function fillCams() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const sel = $('camSel');
+    const cur = camStream && camStream.getVideoTracks()[0] ? camStream.getVideoTracks()[0].getSettings().deviceId : sel.value;
+    sel.innerHTML = '';
+    devs.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || ('Камера ' + (i + 1));
+      if (d.deviceId === cur) o.selected = true;
+      sel.append(o);
+    });
+  } catch (e) {}
+}
+
+function showSelfCam(on) {
+  if (!me) return;
+  const box = me.li.querySelector('.camBox');
+  const v = box.querySelector('video');
+  if (on && camStream) {
+    v.srcObject = camStream;
+    v.classList.toggle('mirror', camFacing === 'user');
+    box.hidden = false;
+    v.play().catch(() => {});
+  } else {
+    v.srcObject = null;
+    box.hidden = true;
+  }
+}
+
+function updateCamUI() {
+  const on = !!camStream;
+  $('camBtn').textContent = on ? 'Выключить камеру' : 'Включить камеру';
+  $('camBtn').classList.toggle('off', on);
+  $('camFlip').hidden = !(ANDROID && on);
+}
+
+async function startCamera() {
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia(camConstraints());
+  } catch (e) {
+    camStream = null;
+    setStatus('Камера не включилась' + (e && e.name === 'NotAllowedError' ? ': нет разрешения' : ''));
+    return;
+  }
+  camStream.getVideoTracks()[0].addEventListener('ended', () => stopCamera());
+  showSelfCam(true);
+  updateCamUI();
+  fillCams();
+  broadcast({ cam: 'start' });
+}
+
+function stopCamera(note) {
+  if (!camStream) return;
+  const st = camStream;
+  camStream = null;
+  broadcast({ cam: 'stop' });
+  Object.keys(camOut).forEach(closeCamOut);
+  st.getTracks().forEach(t => t.stop());
+  showSelfCam(false);
+  updateCamUI();
+  if (note) setStatus(note);
+}
+
+async function switchCamera() {
+  if (!camStream) return;
+  camStream.getTracks().forEach(t => t.stop());     // на телефоне вторую камеру при открытой первой не открыть
+  let ns;
+  try {
+    ns = await navigator.mediaDevices.getUserMedia(camConstraints());
+  } catch (e) {
+    stopCamera('Не получилось переключить камеру, она выключена');
+    return;
+  }
+  const nt = ns.getVideoTracks()[0];
+  nt.addEventListener('ended', () => stopCamera());
+  for (const c of Object.values(camOut)) {
+    const pc = c.peerConnection;
+    if (pc) pc.getSenders().forEach(s => { if (s.track && s.track.kind === 'video') s.replaceTrack(nt); });
+  }
+  camStream = ns;
+  showSelfCam(true);
+  fillCams();
+}
+
+function handleCamMsg(rid, m) {
+  if (m === 'start') {
+    camSenders[rid] = true;
+    if ($('camAuto').checked) wantCam(rid);
+  } else if (m === 'stop') {
+    delete camSenders[rid];
+    closeCamIn(rid);
+  } else if (m === 'watch') {
+    onCamWatch(rid);
+  } else if (m === 'unwatch') {
+    closeCamOut(rid);
+  }
+}
+
+function wantCam(rid) {
+  if (camWanted[rid]) return;
+  camWanted[rid] = true;
+  sendTo(rid, { cam: 'watch' });
+}
+
+function onCamWatch(rid) {
+  if (!camStream || !peer || peer.destroyed) return;
+  closeCamOut(rid);
+  const call = peer.call(rid, camStream, { metadata: { type: 'cam' } });
+  camOut[rid] = call;
+  call.on('close', () => { if (camOut[rid] === call) delete camOut[rid]; });
+  call.on('error', () => {});
+  [500, 2500, 6000].forEach(ms => setTimeout(() => tuneVideoSender(call, camQuality()), ms));
+}
+
+function closeCamOut(rid) {
+  const c = camOut[rid];
+  if (c) { delete camOut[rid]; try { c.close(); } catch (e) {} }
+}
+
+function acceptCam(call) {
+  const rid = call.peer;
+  if (!camWanted[rid]) { call.close(); return; }      // мы не просили эту камеру
+  call.answer();
+  camIn[rid] = { call };
+  call.on('stream', rs => {
+    const pr = peers[rid];
+    if (!pr) return;
+    const box = pr.li.querySelector('.camBox');
+    const v = box.querySelector('video');
+    if (v.srcObject !== rs) v.srcObject = rs;
+    box.hidden = false;
+    v.play().catch(() => {});
+  });
+  call.on('close', () => { if (camIn[rid] && camIn[rid].call === call) closeCamIn(rid); });
+  call.on('error', () => {});
+}
+
+function closeCamIn(rid) {
+  const w = camIn[rid];
+  delete camIn[rid];
+  delete camWanted[rid];
+  if (w) { try { w.call.close(); } catch (e) {} }
+  const pr = peers[rid];
+  if (pr) {
+    const box = pr.li.querySelector('.camBox');
+    if (box) { box.querySelector('video').srcObject = null; box.hidden = true; }
+  }
+}
+
+$('camBtn').onclick = () => { if (camStream) stopCamera(); else startCamera(); };
+$('camFlip').onclick = () => { camFacing = camFacing === 'user' ? 'environment' : 'user'; switchCamera(); };
+$('camSel').onchange = () => switchCamera();
+$('camQ').onchange = () => {
+  store.set('vc_camQ', $('camQ').value);
+  Object.values(camOut).forEach(c => tuneVideoSender(c, camQuality()));
+};
+$('camAuto').onchange = () => {
+  store.set('vc_camAuto', $('camAuto').checked ? '1' : '0');
+  if ($('camAuto').checked) {
+    Object.keys(camSenders).forEach(wantCam);
+  } else {
+    Object.keys(camWanted).forEach(rid => { sendTo(rid, { cam: 'unwatch' }); closeCamIn(rid); });
+  }
+};
+{
+  const q = store.get('vc_camQ'); if (q) $('camQ').value = q;
+  const a = store.get('vc_camAuto'); if (a !== null) $('camAuto').checked = a === '1';
+}
+// Android: когда приложение свёрнуто, система не даёт камере работать, поэтому выключаем её сами
+document.addEventListener('visibilitychange', () => {
+  if (ANDROID && document.hidden && camStream) stopCamera('Камера выключена: приложение свёрнуто');
+});
+
 // ---------- выход ----------
 function leave() {
   clearInterval(meter); clearInterval(hb); clearInterval(wd);
   stopShare();
+  stopCamera();
+  Object.keys(camIn).forEach(closeCamIn);
   Object.keys(screenIn).forEach(rid => closeWatch(rid, true));
   Object.keys(invites).forEach(k => delete invites[k]);
   $('screens').textContent = '';
