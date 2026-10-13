@@ -1,7 +1,8 @@
-const { app, BrowserWindow, ipcMain, session, shell, screen, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, screen, desktopCapturer, Tray, Menu, Notification, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { checkAndStage, cmpVer } = require('./updater');
+const { Watcher } = require('./watcher');
 
 const VERSION = global.__dvVersion || '0.0.0';
 const BUNDLED_DIR = global.__dvBundledDir || __dirname;
@@ -43,7 +44,11 @@ const cfg0 = loadCfg();
 const binds = { ptt: cfg0.ptt || { type: 'key', code: Key.F9 }, mute: cfg0.mute || null };
 const down = { ptt: false, mute: false };
 let capturing = null;   // { target, resolve }
-let win = null, overlay = null;
+let win = null, overlay = null, tray = null;
+let quitting = false;
+const startHidden = process.argv.includes('--hidden');
+const prefs = { closeToTray: true, autostart: false, trayHinted: false, ...(cfg0.prefs || {}) };
+let watchCfg = { enabled: true, name: '', favs: [], ...(cfg0.watch || {}) };
 let overlayCfg = { enabled: false, corner: 'tr', ...(cfg0.overlay || {}) };
 let lastOverlayList = [];
 
@@ -120,6 +125,84 @@ ipcMain.handle('ice:get', () => {
 });
 
 ipcMain.handle('app:info', () => ({ version: VERSION, name: 'DVoice' }));
+
+// ---------- избранные каналы: уведомления о входе ----------
+let peerOpts = {};
+try { if (process.env.DV_PEER_JSON) peerOpts = JSON.parse(process.env.DV_PEER_JSON); } catch (e) {}
+
+function showWindow() {
+  if (!win || win.isDestroyed()) { createWindow(); return; }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function notifyJoin(j) {
+  console.log('[DVoice] уведомление о входе:', j.label, '/', j.name);
+  try {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({
+      title: 'DVoice',
+      body: 'В канал «' + j.label + '» присоединился ' + j.name,
+      icon: nativeImage.createFromPath(assetPath('icon.png')),
+      silent: false
+    });
+    n.on('click', () => { showWindow(); send('room:open', j.room); });
+    n.show();
+  } catch (e) { console.error('notify failed', e); }
+}
+
+const watcher = new Watcher({ peer: peerOpts, onJoin: notifyJoin });
+
+function applyWatch() {
+  watcher.configure({ enabled: watchCfg.enabled, name: watchCfg.name, favs: watchCfg.favs });
+}
+
+ipcMain.handle('watch:set', (_e, v) => {
+  if (!v || typeof v !== 'object') return false;
+  const favs = Array.isArray(v.favs) ? v.favs.slice(0, 20).map(f => ({
+    room: String((f && f.room) || '').slice(0, 40),
+    label: String((f && f.label) || '').slice(0, 40),
+    notify: !(f && f.notify === false)
+  })) : [];
+  watchCfg = { enabled: v.enabled !== false, name: String(v.name || '').slice(0, 40), favs };
+  saveCfg({ watch: watchCfg });
+  applyWatch();
+  return true;
+});
+ipcMain.on('watch:inRoom', (_e, room) => watcher.setInRoom(typeof room === 'string' ? room : null));
+
+function applyAutostart() {
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!prefs.autostart, path: process.execPath, args: ['--hidden'] });
+  } catch (e) {}
+}
+ipcMain.handle('prefs:get', () => ({ closeToTray: prefs.closeToTray, autostart: prefs.autostart, tray: !!tray }));
+ipcMain.handle('prefs:set', (_e, v) => {
+  if (v && typeof v.closeToTray === 'boolean') prefs.closeToTray = v.closeToTray;
+  if (v && typeof v.autostart === 'boolean') { prefs.autostart = v.autostart; applyAutostart(); }
+  saveCfg({ prefs });
+  return { closeToTray: prefs.closeToTray, autostart: prefs.autostart, tray: !!tray };
+});
+
+function createTray() {
+  try {
+    let img = nativeImage.createFromPath(assetPath('icon.png'));
+    if (img.isEmpty()) return;
+    img = img.resize({ width: 16, height: 16 });
+    tray = new Tray(img);
+    tray.setToolTip('DVoice');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Открыть DVoice', click: showWindow },
+      { type: 'separator' },
+      { label: 'Выход', click: () => { quitting = true; app.quit(); } }
+    ]));
+    tray.on('click', showWindow);
+  } catch (e) {
+    console.error('tray failed', e);
+    tray = null;
+  }
+}
 
 // ---------- оверлей ----------
 const OV_W = 300, OV_H = 320, OV_MARGIN = 14;
@@ -236,6 +319,7 @@ function createWindow() {
     minWidth: 400,
     minHeight: 560,
     backgroundColor: '#11151c',
+    show: !startHidden,
     autoHideMenuBar: true,
     title: 'DVoice',
     icon: assetPath('icon.png'),
@@ -256,6 +340,19 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => {
     setTimeout(() => { try { global.__dvConfirm && global.__dvConfirm(); } catch (e) {} }, 8000);
   });
+  win.on('close', e => {
+    if (!quitting && prefs.closeToTray && tray) {
+      e.preventDefault();
+      win.hide();
+      if (!prefs.trayHinted) {
+        prefs.trayHinted = true;
+        saveCfg({ prefs });
+        try {
+          if (Notification.isSupported()) new Notification({ title: 'DVoice', body: 'Приложение свёрнуто в трей: оно продолжает работать. Выход: правой кнопкой по значку.' }).show();
+        } catch (err) {}
+      }
+    }
+  });
   win.on('closed', () => { win = null; destroyOverlay(); });
 }
 
@@ -263,7 +360,8 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  app.on('second-instance', () => showWindow());
+  app.on('before-quit', () => { quitting = true; });
   app.whenReady().then(() => {
     const okPerm = p => p === 'media' || p === 'display-capture';
     session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => cb(okPerm(permission)));
@@ -280,11 +378,16 @@ if (!gotLock) {
       } catch (e) { callback({}); }
     });
     createWindow();
+    createTray();
+    applyAutostart();
+    applyWatch();
     if (uio) { try { uio.start(); } catch (e) { console.error(e); } }
     if (overlayCfg.enabled) applyOverlay();
-    setTimeout(runCheck, 4000);
-    setInterval(runCheck, 20 * 60 * 1000);
+    if (!process.env.DV_NO_UPDATE) {
+      setTimeout(runCheck, 4000);
+      setInterval(runCheck, 20 * 60 * 1000);
+    }
   });
   app.on('window-all-closed', () => app.quit());
-  app.on('will-quit', () => { if (uio) { try { uio.stop(); } catch (e) {} } });
+  app.on('will-quit', () => { watcher.stopAll(); if (uio) { try { uio.stop(); } catch (e) {} } });
 }
