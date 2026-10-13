@@ -8,6 +8,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -15,6 +17,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import androidx.webkit.WebViewAssetLoader;
 
@@ -29,6 +32,8 @@ public class MainActivity extends Activity {
     private WebView web;
     private Bridge bridge;
     private PermissionRequest pendingWebPerm;
+    private View customView;
+    private WebChromeClient.CustomViewCallback customCallback;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private final Runnable updateTick = new Runnable() {
@@ -86,6 +91,16 @@ public class MainActivity extends Activity {
                     }
                 });
             }
+
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                showCustomView(view, callback);
+            }
+
+            @Override
+            public void onHideCustomView() {
+                hideCustomView();
+            }
         });
 
         bridge = new Bridge(this, web);
@@ -109,39 +124,80 @@ public class MainActivity extends Activity {
         if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERMS);
     }
 
+    private boolean has(String perm) {
+        return checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED;
+    }
+
     private void handleWebPermission(PermissionRequest request) {
         if (!HOST.equals(request.getOrigin().getHost())) {
             request.deny();
             return;
         }
         boolean wantsAudio = false;
+        boolean wantsVideo = false;
         for (String r : request.getResources()) {
             if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) wantsAudio = true;
+            else if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) wantsVideo = true;
         }
-        if (!wantsAudio) {
+        if (!wantsAudio && !wantsVideo) {
             request.deny();
             return;
         }
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-        } else {
-            if (pendingWebPerm != null) pendingWebPerm.deny();
-            pendingWebPerm = request;
-            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_PERMS);
+        ArrayList<String> need = new ArrayList<String>();
+        if (wantsAudio && !has(Manifest.permission.RECORD_AUDIO)) need.add(Manifest.permission.RECORD_AUDIO);
+        if (wantsVideo && !has(Manifest.permission.CAMERA)) need.add(Manifest.permission.CAMERA);
+        if (need.isEmpty()) {
+            grantWeb(request);
+            return;
         }
+        if (pendingWebPerm != null) pendingWebPerm.deny();
+        pendingWebPerm = request;
+        requestPermissions(need.toArray(new String[0]), REQ_PERMS);
+    }
+
+    /** Отдаём странице только то, на что у приложения есть разрешение Android. */
+    private void grantWeb(PermissionRequest request) {
+        ArrayList<String> ok = new ArrayList<String>();
+        for (String r : request.getResources()) {
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r) && has(Manifest.permission.RECORD_AUDIO)) ok.add(r);
+            else if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r) && has(Manifest.permission.CAMERA)) ok.add(r);
+        }
+        if (ok.isEmpty()) request.deny();
+        else request.grant(ok.toArray(new String[0]));
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (pendingWebPerm != null) {
-            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                pendingWebPerm.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-            } else {
-                pendingWebPerm.deny();
-            }
+            PermissionRequest req = pendingWebPerm;
             pendingWebPerm = null;
+            grantWeb(req);
         }
+    }
+
+    // ---------- видео на весь экран ----------
+
+    private void showCustomView(View view, WebChromeClient.CustomViewCallback callback) {
+        if (customView != null) {
+            callback.onCustomViewHidden();
+            return;
+        }
+        customView = view;
+        customCallback = callback;
+        ((FrameLayout) getWindow().getDecorView()).addView(view,
+                new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    }
+
+    private void hideCustomView() {
+        if (customView == null) return;
+        ((FrameLayout) getWindow().getDecorView()).removeView(customView);
+        customView = null;
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        if (customCallback != null) customCallback.onCustomViewHidden();
+        customCallback = null;
     }
 
     @Override
@@ -158,6 +214,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (customView != null) {
+            hideCustomView();
+            return;
+        }
         // не закрываем приложение: голос должен продолжать работать в фоне
         moveTaskToBack(true);
     }
