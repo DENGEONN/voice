@@ -29,7 +29,7 @@ final class WebUpdater {
             "https://raw.githubusercontent.com/DENGEONN/voice/main/dvoice"
     };
     private static final String[] FILES = {"index.html", "peerjs.min.js"};
-    private static final int APP_LEVEL = 2;   // растёт, только если нужна новая APK
+    private static final int APP_LEVEL = 3;   // растёт, только если нужна новая APK
     private static final Pattern VER = Pattern.compile("^\\d+\\.\\d+\\.\\d+$");
     private static final Pattern HEX = Pattern.compile("^[a-fA-F0-9]{64}$");
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);

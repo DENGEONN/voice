@@ -13,7 +13,7 @@ android {
         minSdk 26
         targetSdk 34
         versionCode vc
-        versionName "1.0.3"
+        versionName "1.0.4"
     }
 
     signingConfigs {
@@ -45,4 +45,5 @@ android {
 
 dependencies {
     implementation "androidx.webkit:webkit:1.11.0"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
 }

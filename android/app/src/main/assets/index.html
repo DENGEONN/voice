@@ -116,6 +116,14 @@
   #people li:has(.camBox:not([hidden])) { align-items: start; }
   .camBox video { display: block; width: 100%; max-width: 280px; border-radius: 10px; margin-top: 8px; background: #000; }
   .camBox video.mirror { transform: scaleX(-1); }
+  .topBtns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .favAddRow input { margin: 0; flex: 1; min-width: 0; }
+  #favBox h2 { font-size: 15px; color: var(--muted); font-weight: 600; margin: 24px 0 8px; }
+  #favList { list-style: none; margin: 0 0 16px; padding: 0; }
+  #favList li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; background: var(--panel); }
+  .favName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .favNotify { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .favNotify input { margin: 0; accent-color: var(--speak); }
   #pttHold { width: 100%; margin-bottom: 14px; padding: 22px 16px; font-size: 18px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   #pttHold.down { background: var(--speak); color: #1b1405; border-color: var(--speak); }
   #status { color: var(--muted); font-size: 14px; min-height: 1.4em; }
@@ -139,16 +147,33 @@
       <input type="text" id="room" maxlength="40" autocomplete="off" placeholder="Например: kirill-ken-2026-xyz">
     </label>
     <div id="roomPreview"></div>
+    <div class="opt favAddRow">
+      <input type="text" id="favLabel" maxlength="30" autocomplete="off" placeholder="Название для избранного (необязательно)">
+      <button class="small" id="favAdd">В избранное</button>
+    </div>
     <p class="hint">Код = пароль от комнаты. Придумайте длинный и никому не показывайте. Все, кто введёт тот же код, попадут в один канал.</p>
     <br>
     <button class="primary" id="joinBtn">Зайти</button>
     <p id="err" role="alert"></p>
+
+    <div id="favBox" hidden>
+      <h2>Избранные каналы</h2>
+      <ul id="favList"></ul>
+    </div>
+
+    <details id="favSettings">
+      <summary>Уведомления и трей</summary>
+      <label class="opt"><input type="checkbox" id="notifyOn" checked> Уведомлять, когда друзья заходят в избранные каналы</label>
+      <label class="opt native-only no-android" hidden><input type="checkbox" id="trayChk" checked> Закрытие окна сворачивает в трей (приложение продолжает работать)</label>
+      <label class="opt native-only no-android" hidden><input type="checkbox" id="autoChk"> Запускать вместе с Windows (скрыто, в трее)</label>
+      <p class="hint">Уведомления приходят, пока DVoice запущен: на компьютере это значок в трее, на телефоне фоновая служба.</p>
+    </details>
   </section>
 
   <section id="call" hidden>
     <div class="top">
       <span class="room" id="roomLabel"></span>
-      <button id="copy">Скопировать ссылку</button>
+      <div class="topBtns"><button id="favTop" class="small">В избранное</button><button id="copy">Скопировать ссылку</button></div>
     </div>
 
     <div id="screens"></div>
@@ -253,6 +278,8 @@
 <script src="./peerjs.min.js"></script>
 <script>
 // ===================== НАСТРОЙКИ =====================
+const WATCH_PREFIX = 'dgn-watch-v1-';   // слоты наблюдателей за каналами (см. watcher.js)
+const WATCH_SLOTS = 6;
 const PREFIX = 'dgn-voice-v2-';   // протокол: у всех должен совпадать (обновления приложения его не меняют)
 const MAX_SLOTS = 6;
 const GLARE_MS = 4000;
@@ -438,6 +465,9 @@ async function join() {
   store.set('vc_room', room);
   track = stream.getAudioTracks()[0];
   if (ANDROID) ANDROID.startCall(room);
+  setInRoom(room);
+  syncWatch();
+  renderFavs();
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   audioCtx.resume();
@@ -472,6 +502,7 @@ function connectSlot(n) {
 
   p.on('open', () => {
     peer = p; slot = n;
+    announceJoin();
     setStatus('Ты в комнате (место ' + n + '). ' + (customIce ? 'TURN: свой.' : 'TURN: публичный.') + ' Ждём остальных…');
     for (let i = 1; i <= MAX_SLOTS; i++) if (i !== n) callSlot(i, 0);
   });
@@ -1395,6 +1426,122 @@ document.addEventListener('visibilitychange', () => {
   if (ANDROID && document.hidden && camStream) stopCamera('Камера выключена: приложение свёрнуто');
 });
 
+// ---------- избранные каналы и уведомления о входе ----------
+let favs = [];
+try { favs = JSON.parse(store.get('vc_favs') || '[]'); if (!Array.isArray(favs)) favs = []; } catch (e) { favs = []; }
+favs = favs.filter(f => f && typeof f.room === 'string' && sanitizeRoom(f.room).length >= 4)
+           .map(f => ({ room: sanitizeRoom(f.room), label: String(f.label || f.room).slice(0, 30), notify: f.notify !== false }));
+
+function syncWatch() {
+  const payload = {
+    enabled: $('notifyOn').checked,
+    name: ($('name').value.trim() || store.get('vc_name') || ''),
+    favs: favs
+  };
+  try {
+    if (NATIVE && NATIVE.watchSet) NATIVE.watchSet(payload);
+    else if (ANDROID) ANDROID.setWatch(JSON.stringify(payload));
+  } catch (e) {}
+}
+function setInRoom(r) {
+  try {
+    if (NATIVE && NATIVE.watchInRoom) NATIVE.watchInRoom(r || null);
+    else if (ANDROID) ANDROID.setInRoom(r || '');
+  } catch (e) {}
+}
+
+// Заходя в комнату, стучимся в слоты наблюдателей: их приложения покажут уведомление «X присоединился»
+function announceJoin() {
+  if (!peer || peer.destroyed) return;
+  for (let n = 1; n <= WATCH_SLOTS; n++) {
+    try {
+      const c = peer.connect(WATCH_PREFIX + room + '-' + n, { metadata: { dv: 'join', name: myName }, reliable: true });
+      c.on('error', () => {});
+      setTimeout(() => { try { c.close(); } catch (e) {} }, 4000);
+    } catch (e) {}
+  }
+}
+
+function saveFavs() {
+  store.set('vc_favs', JSON.stringify(favs));
+  renderFavs();
+  syncWatch();
+}
+function addFav(r, label) {
+  r = sanitizeRoom(r);
+  if (r.length < 4) { setErr('Код комнаты: минимум 4 символа, только латиница, цифры, - и _'); return false; }
+  const ex = favs.find(f => f.room === r);
+  if (ex) { if (label) ex.label = label.slice(0, 30); }
+  else favs.push({ room: r, label: (label || r).slice(0, 30), notify: true });
+  saveFavs();
+  return true;
+}
+function removeFav(r) {
+  favs = favs.filter(f => f.room !== r);
+  saveFavs();
+}
+function renderFavs() {
+  $('favBox').hidden = favs.length === 0;
+  const ul = $('favList');
+  ul.textContent = '';
+  for (const f of favs) {
+    const li = document.createElement('li');
+    const nm = document.createElement('span');
+    nm.className = 'favName';
+    nm.textContent = f.label;
+    nm.title = f.label;
+    const lab = document.createElement('label');
+    lab.className = 'favNotify';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = f.notify;
+    cb.onchange = () => { f.notify = cb.checked; saveFavs(); };
+    lab.append(cb, document.createTextNode('уведомлять'));
+    const go = document.createElement('button');
+    go.className = 'small';
+    go.textContent = 'Зайти';
+    go.onclick = () => window.dvOpenRoom(f.room);
+    const del = document.createElement('button');
+    del.className = 'small danger';
+    del.textContent = '✕';
+    del.setAttribute('aria-label', 'Убрать из избранного');
+    del.onclick = () => removeFav(f.room);
+    li.append(nm, lab, go, del);
+    ul.append(li);
+  }
+  const inFav = room && favs.some(f => f.room === room);
+  $('favTop').textContent = inFav ? 'Убрать из избранного' : 'В избранное';
+}
+
+// Открыть комнату по коду: из списка избранного, из уведомления на компьютере и на телефоне
+window.dvOpenRoom = function (r) {
+  r = sanitizeRoom(r);
+  if (r.length < 4) return;
+  if (!$('call').hidden) {
+    if (r !== room) setStatus('Ты уже в другой комнате. Выйди, чтобы зайти в эту.');
+    return;
+  }
+  $('room').value = r;
+  updateRoomPreview();
+  if ($('name').value.trim()) join();
+  else { setErr('Введи ник и нажми «Зайти»'); $('name').focus(); }
+};
+
+$('favAdd').onclick = () => { if (addFav($('room').value, $('favLabel').value.trim())) $('favLabel').value = ''; };
+$('favTop').onclick = () => { if (favs.some(f => f.room === room)) removeFav(room); else addFav(room, ''); };
+$('notifyOn').checked = store.get('vc_notifyOn') !== '0';
+$('notifyOn').onchange = () => { store.set('vc_notifyOn', $('notifyOn').checked ? '1' : '0'); syncWatch(); };
+$('name').addEventListener('change', syncWatch);
+
+if (NATIVE) {
+  NATIVE.onOpenRoom(r => window.dvOpenRoom(r));
+  NATIVE.getPrefs().then(p => { $('trayChk').checked = p.closeToTray; $('autoChk').checked = p.autostart; if (!p.tray) $('trayChk').disabled = true; });
+  $('trayChk').onchange = () => NATIVE.setPrefs({ closeToTray: $('trayChk').checked });
+  $('autoChk').onchange = () => NATIVE.setPrefs({ autostart: $('autoChk').checked });
+}
+renderFavs();
+syncWatch();
+
 // ---------- выход ----------
 function leave() {
   clearInterval(meter); clearInterval(hb); clearInterval(wd);
@@ -1413,6 +1560,7 @@ function leave() {
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; track = null; me = null;
   if (overlayOn) ovSend([]);
+  setInRoom(null);
   if (ANDROID) ANDROID.stopCall();
   lastOv = '';
   if (audioCtx) { const c = audioCtx; setTimeout(() => c.close().catch(() => {}), 400); audioCtx = null; }

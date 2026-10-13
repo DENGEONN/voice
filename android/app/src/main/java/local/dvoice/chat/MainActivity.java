@@ -2,6 +2,7 @@ package local.dvoice.chat;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
@@ -21,6 +22,8 @@ import android.widget.FrameLayout;
 
 import androidx.webkit.WebViewAssetLoader;
 
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 
 public class MainActivity extends Activity {
@@ -33,6 +36,8 @@ public class MainActivity extends Activity {
     private Bridge bridge;
     private PermissionRequest pendingWebPerm;
     private View customView;
+    private String pendingRoom;
+    private boolean pageLoaded = false;
     private WebChromeClient.CustomViewCallback customCallback;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -75,6 +80,12 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void onPageFinished(WebView view, String url) {
+                pageLoaded = true;
+                dispatchRoom();
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 // только наши страницы; всё внешнее блокируем
                 return !HOST.equals(request.getUrl().getHost());
@@ -107,9 +118,30 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(bridge, "DVAndroid");
         OverlayController.configure(this, bridge.overlayEnabled(), bridge.overlayCorner());
 
+        pendingRoom = getIntent() != null ? getIntent().getStringExtra("room") : null;
         askStartupPermissions();
+        WatchService.sync(this);
         web.loadUrl(START_URL);
         handler.postDelayed(updateTick, 4000);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String r = intent != null ? intent.getStringExtra("room") : null;
+        if (r != null && r.length() > 0) {
+            pendingRoom = r;
+            if (pageLoaded) dispatchRoom();
+        }
+    }
+
+    /** Нажали на уведомление «X присоединился»: просим страницу открыть эту комнату. */
+    private void dispatchRoom() {
+        if (pendingRoom == null || web == null) return;
+        String r = pendingRoom;
+        pendingRoom = null;
+        web.evaluateJavascript("window.dvOpenRoom && window.dvOpenRoom(" + JSONObject.quote(r) + ")", null);
     }
 
     private void askStartupPermissions() {

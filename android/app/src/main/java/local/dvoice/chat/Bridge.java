@@ -153,6 +153,29 @@ public class Bridge {
         });
     }
 
+    // ---------- избранные каналы: слежение и уведомления ----------
+
+    @JavascriptInterface
+    public void setWatch(final String json) {
+        try {
+            new JSONObject(json);
+        } catch (Exception e) {
+            return;
+        }
+        prefs().edit().putString("watch_cfg", json).apply();
+        act.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                WatchService.sync(act);
+            }
+        });
+    }
+
+    @JavascriptInterface
+    public void setInRoom(String room) {
+        WatchService.inRoom = room == null ? "" : room;
+    }
+
     // ---------- батарея ----------
 
     @JavascriptInterface
