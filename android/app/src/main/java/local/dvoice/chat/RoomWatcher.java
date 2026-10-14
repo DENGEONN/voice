@@ -24,12 +24,15 @@ final class RoomWatcher {
     }
 
     private static final String PREFIX = "dgn-watch-v1-";
-    private static final String HOST = "0.peerjs.com";
     private static final int MAX_SLOTS = 6;
 
     private final OkHttpClient client;
     private final String room;
     private final Listener listener;
+    private final String host;
+    private final int port;
+    private final String path;
+    private final boolean secure;
     private final Handler h = new Handler(Looper.getMainLooper());
     private final Random rnd = new Random();
 
@@ -59,8 +62,13 @@ final class RoomWatcher {
         }
     };
 
-    RoomWatcher(OkHttpClient client, String room, String label, Listener listener) {
+    RoomWatcher(OkHttpClient client, String host, int port, String path, boolean secure,
+                String room, String label, Listener listener) {
         this.client = client;
+        this.host = host;
+        this.port = port;
+        this.path = path;
+        this.secure = secure;
         this.room = room;
         this.label = label;
         this.listener = listener;
@@ -96,7 +104,7 @@ final class RoomWatcher {
         final int g = ++gen;
         taken = false;
         String id = PREFIX + room + "-" + slot;
-        String url = "wss://" + HOST + "/peerjs?key=peerjs&id=" + id + "&token=" + token();
+        String url = (secure ? "wss://" : "ws://") + host + ":" + port + path + "peerjs?key=peerjs&id=" + id + "&token=" + token();
         Request req = new Request.Builder().url(url).build();
         ws = client.newWebSocket(req, new WebSocketListener() {
             @Override

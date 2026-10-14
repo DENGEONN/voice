@@ -41,6 +41,11 @@ public class WatchService extends Service implements RoomWatcher.Listener {
     private final Map<String, Long> seen = new HashMap<String, Long>();
     private OkHttpClient client;
     private String selfName = "";
+    private String serverKey = "";
+    private String srvHost = "0.peerjs.com";
+    private int srvPort = 443;
+    private String srvPath = "/";
+    private boolean srvSecure = true;
 
     /** Запускает или останавливает службу в зависимости от сохранённых настроек. */
     static void sync(Context ctx) {
@@ -127,6 +132,31 @@ public class WatchService extends Service implements RoomWatcher.Listener {
         Map<String, String> labels = new HashMap<String, String>();
         boolean enabled = c != null && c.optBoolean("enabled", true);
         selfName = c != null ? c.optString("name", "").trim() : "";
+
+        // адрес сервера знакомства (по умолчанию общий PeerJS); при смене перезапускаем наблюдателей
+        String host = "0.peerjs.com";
+        int port = 443;
+        String path = "/";
+        boolean secure = true;
+        JSONObject sv = c != null ? c.optJSONObject("server") : null;
+        if (sv != null && sv.optString("host", "").length() > 0) {
+            host = sv.optString("host", host);
+            secure = sv.optBoolean("secure", true);
+            port = sv.optInt("port", secure ? 443 : 80);
+            path = sv.optString("path", "/");
+            if (!path.startsWith("/")) path = "/" + path;
+            if (!path.endsWith("/")) path = path + "/";
+        }
+        String key = host + "|" + port + "|" + path + "|" + secure;
+        if (!key.equals(serverKey)) {
+            for (RoomWatcher w : watchers.values()) w.stop();
+            watchers.clear();
+            serverKey = key;
+            srvHost = host;
+            srvPort = port;
+            srvPath = path;
+            srvSecure = secure;
+        }
         if (enabled) {
             JSONArray favs = c.optJSONArray("favs");
             for (int i = 0; favs != null && i < favs.length(); i++) {
@@ -152,7 +182,7 @@ public class WatchService extends Service implements RoomWatcher.Listener {
             if (w != null) {
                 w.label = labels.get(room);
             } else {
-                w = new RoomWatcher(client, room, labels.get(room), this);
+                w = new RoomWatcher(client, srvHost, srvPort, srvPath, srvSecure, room, labels.get(room), this);
                 watchers.put(room, w);
                 w.start();
             }
