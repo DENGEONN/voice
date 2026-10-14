@@ -98,7 +98,8 @@ class RoomWatch {
 
 class Watcher {
   constructor({ peer, onJoin } = {}) {
-    this.opts = Object.assign({ host: '0.peerjs.com', port: 443, path: '/', secure: true, key: 'peerjs' }, peer || {});
+    this.baseOpts = Object.assign({ host: '0.peerjs.com', port: 443, path: '/', secure: true, key: 'peerjs' }, peer || {});
+    this.opts = this.baseOpts;
     this.onJoin = onJoin || (() => {});
     this.rooms = new Map();   // room -> RoomWatch
     this.enabled = true;
@@ -109,7 +110,9 @@ class Watcher {
   }
 
   // favs: [{ room, label, notify }]
-  configure({ enabled, name, favs }) {
+  configure({ enabled, name, favs, server }) {
+    const next = server && server.host ? Object.assign({}, this.baseOpts, server) : this.baseOpts;
+    if (JSON.stringify(next) !== JSON.stringify(this.opts)) { this.stopAll(); this.opts = next; }
     this.enabled = enabled !== false;
     this.selfName = String(name || '').trim();
     const want = new Map();
