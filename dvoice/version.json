@@ -1,16 +1,15 @@
 {
-  "version": "1.0.5",
-  "notes": "починка подключения, фуллскрин демонстрации, свой сервер знакомства",
+  "version": "1.0.6",
+  "notes": "откат на 1.0.3",
   "minShell": 1,
-  "minAndroid": 3,
+  "minAndroid": 2,
   "files": {
-    "main.js": "f379f5afa44742b79547a800d72eff6010529004e4bd53cbaff6104b17016b53",
-    "preload.js": "6fe9339f017bd912c0f42f68b90dd0f7687866b39d88785dcf23d0e0873a13f0",
-    "index.html": "df6b27f6040f9758d3d820df743dcae32133037f201e38f668cfa4064012438f",
+    "main.js": "3735b035b6ed2db5f69864f16976f1db7de4ea17d9e759460ea9cdc1386ef5fa",
+    "preload.js": "f41ed090e1bb276dd661706adb92160066f35d038d46dee68089d2f41a09eec0",
+    "index.html": "84beb45ad117d0a7d02f0df51db681b8ef625437eaf9228db0c3fa825171fff9",
     "overlay.html": "1274d73ab71764059a4836deff9d017fc04efde152206e84292079960d02d906",
     "overlay-preload.js": "1a6b213bfa2af26b807eba0797c8a42f60478eb250711bf81313ecfe5b1cc72f",
     "updater.js": "9da3f8600d47553e145603ef6c3096795bd22eaf24921b1cdd2bc7e7b04551c8",
-    "watcher.js": "5fa259d43a9c4230b0626d45514761c0eda454c0fd31d8aa18264af03e216f89",
     "peerjs.min.js": "ad5d8870d1e389914f9cba8d35be313c4327c69ee0a221e482e9bf7621136fe5",
     "icon.png": "910967bf3a453eea092b2c0f0d39f0a1849b70695bdfe810372b7a07309bc5ef"
   }
